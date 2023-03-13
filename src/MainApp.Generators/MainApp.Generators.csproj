@@ -6,6 +6,22 @@
 	  <IsRoslynComponent>true</IsRoslynComponent>
   </PropertyGroup>
 
+
+	<PropertyGroup>
+		<GeneratePackageOnBuild>true</GeneratePackageOnBuild>
+		<IncludeBuildOutput>false</IncludeBuildOutput>
+		<Version>1.0.0</Version>
+		<AssemblyVersion>$(Version).0</AssemblyVersion>
+		<AssemblyFileVersion>$(Version).0</AssemblyFileVersion>
+		<Authors>Fu xu</Authors>
+		<Description>Contains a C# Source Generator for the ToString method</Description>
+	</PropertyGroup>
+	<ItemGroup>
+		<!-- Package the generator in the analyzer directory of the nuget package -->
+		<None Include="$(OutputPath)\$(AssemblyName).dll"
+		      Pack="true"
+		      PackagePath="analyzers/dotnet/cs" Visible="false" />
+	</ItemGroup>
   <ItemGroup>
     <PackageReference Include="Microsoft.CodeAnalysis.Analyzers" Version="3.3.4">
       <PrivateAssets>all</PrivateAssets>

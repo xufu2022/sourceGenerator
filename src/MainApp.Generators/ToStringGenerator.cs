@@ -1,5 +1,7 @@
 ﻿using System;
+using System.Collections.Generic;
 using System.Text;
+using MainApp.Generators.Model;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
@@ -13,16 +15,52 @@ namespace MainApp.Generators
         {
             var classes = context.SyntaxProvider.CreateSyntaxProvider(
                 predicate: (node, _) => IsSyntaxTarget(node),
-                transform: (ctx, _) => (ClassDeclarationSyntax)ctx.Node);
+                transform: static (ctx, _) => GetSemanticTarget(ctx))
+                .Where(static (target) => target is not null);
 
             context.RegisterSourceOutput(classes, (ctx, source) =>
-                Execute(ctx,source)
+                Execute(ctx,source!)
             );
 
             context.RegisterPostInitializationOutput(
                 static (ctx) => PostInitializationOutput(ctx));
         }
+        private static ClassToGenerate? GetSemanticTarget(
+            GeneratorSyntaxContext context)
+        {
+            var classDeclarationSyntax = (ClassDeclarationSyntax)context.Node;
+            var classSymbol = context.SemanticModel.GetDeclaredSymbol(classDeclarationSyntax);
+            var attributeSymbol = context.SemanticModel.Compilation.GetTypeByMetadataName(
+                "MainApp.Generators.GenerateToStringAttribute");
 
+            if (classSymbol is not null
+                && attributeSymbol is not null)
+            {
+                foreach (var attributeData in classSymbol.GetAttributes())
+                {
+                    if (attributeSymbol.Equals(attributeData.AttributeClass,
+                            SymbolEqualityComparer.Default))
+                    {
+                        var namespaceName = classSymbol.ContainingNamespace.ToDisplayString();
+                        var className = classSymbol.Name;
+                        var propertyNames = new List<string>();
+
+                        foreach (var memberSymbol in classSymbol.GetMembers())
+                        {
+                            if (memberSymbol.Kind == SymbolKind.Property
+                                && memberSymbol.DeclaredAccessibility == Accessibility.Public)
+                            {
+                                propertyNames.Add(memberSymbol.Name);
+                            }
+                        }
+
+                        return new ClassToGenerate(namespaceName, className, propertyNames);
+                    }
+                }
+            }
+
+            return null;
+        }
         private static bool IsSyntaxTarget(SyntaxNode node)
         {
             return node is ClassDeclarationSyntax classDeclarationSyntax
@@ -38,17 +76,30 @@ namespace MainApp.Generators
 }");
         }
 
-        private void Execute(SourceProductionContext context, ClassDeclarationSyntax classDeclarationSyntax)
+        private static Dictionary<string, int> _countPerFileName = new();
+        private void Execute(SourceProductionContext context, ClassToGenerate? classToGenerate)
         {
-            if (classDeclarationSyntax.Parent
-                is BaseNamespaceDeclarationSyntax namespaceDeclarationSyntax)
+            if (classToGenerate is null)
             {
-                var namespaceName = namespaceDeclarationSyntax.Name.ToString();
-                var className = classDeclarationSyntax.Identifier.Text;
-                var fileName = $"{namespaceName}.{className}.g.cs";
+                return;
+            }
 
-                var stringBuilder = new StringBuilder();
-                stringBuilder.Append($@"namespace {namespaceName}
+            var namespaceName = classToGenerate.NamespaceName;
+            var className = classToGenerate.ClassName;
+            var fileName = $"{namespaceName}.{className}.g.cs";
+
+            if (_countPerFileName.ContainsKey(fileName))
+            {
+                _countPerFileName[fileName]++;
+            }
+            else
+            {
+                _countPerFileName.Add(fileName, 1);
+            }
+
+            var stringBuilder = new StringBuilder();
+                stringBuilder.Append($@"// Generation count: {_countPerFileName[fileName]}
+namespace {namespaceName}
 {{
     partial class {className}
     {{
@@ -57,12 +108,9 @@ namespace MainApp.Generators
                         return $""");
 
             var first = true;
-            foreach (var memberDeclarationSyntax in classDeclarationSyntax.Members)
+            foreach (var propertyName in classToGenerate.PropertyNames)
             {{
-                if (memberDeclarationSyntax
-                    is PropertyDeclarationSyntax propertyDeclarationSyntax
-                    && propertyDeclarationSyntax.Modifiers.Any(SyntaxKind.PublicKeyword))
-                {{
+                
                     if (first)
                     {{
                         first = false;
@@ -71,9 +119,8 @@ namespace MainApp.Generators
                     {{
                         stringBuilder.Append("; ");
                     }}
-                    var propertyName = propertyDeclarationSyntax.Identifier.Text;
                     stringBuilder.Append($"{propertyName}:{{{propertyName}}}");
-                }}
+                
             }}
 
             stringBuilder.Append($@""";
@@ -83,7 +130,7 @@ namespace MainApp.Generators
 ");
 
                 context.AddSource(fileName, stringBuilder.ToString());
-            }
+            
         }
     }
 }
